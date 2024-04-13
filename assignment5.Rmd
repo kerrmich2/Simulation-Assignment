@@ -1,0 +1,419 @@
+---
+title: "Maximum Likelihood Estimation and Bootstrap: The Weibull Distribution"
+author: "Michael Kerr"
+date: "2024-01-30"
+output: pdf_document
+bibliography: bib_simulation.bib
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(eval = TRUE)
+```
+
+# Introduction
+
+The traditional two-parameter Weibull distribution is of the form:
+
+\[
+f(x; k, \lambda) = \frac{k}{\lambda}\left(\frac{x}{\lambda}\right)^{k-1}\exp\left\{ - \left(\frac{x}{\lambda}\right)^k \right\} 1_{\mathbb{R}_+}(x)
+\]
+
+where $k$, $\lambda$ are labeled the 'scale' and 'shape' parameters, respectively. This distribution function forms the basis for many adjusted distributions and has been referenced over 1000 times (@weibull_lai). The Weibull distribution, named after Waloddi Weibull for his extensive research on it, is used most among survival analysts for studying lifetimes. Waloddi developed this distribution for breaking strength of materials and found that it was particularly useful for describing the distribution of the survival of mechanical components. It is now commonly used for survival purposes: to analyse the behaviour of time-to-failure, or death in the case of medicine.
+
+@mle_weibull introduce new bias adjusted maximum likelihood estimates for purposes of survival analysis. They use methods of traditional maximum likelihood estimation (MLE), as described in this paper, and then compare it to bias adjusted MLEs for complete data and type 1 data. The methods of bias adjustment involve simulation of small and finite sample sizes while also keeping $\lambda = 1$. They perform simulation on simulated censored data and eventually real-life data to evaluate their hypotheses. This report is a demonstration of the basis of this paper, and of bootstrap and simulation in general. This report does not go into the survival parts of the Weibull distribution, and assumes that $\lambda$ is chosen such that
+$\mathbb{E}[f(x;k, \lambda)]= \lambda\Gamma\left( 1+1/k \right)=1$. Therefore $\lambda = \frac{1}{\Gamma\left( 1 + 1/k \right)}$.
+
+The first two sections go over the idea around inverse-transform sampling and maximum-likelihood estimation. After which is the
+methodology, algorithm, results discussion then specifications.
+
+# Generating Weibull distributed data
+
+Using inverse transform sampling, it is possible to generate values from any distribution, $D$, given a known
+CDF. If $Y$ is a continuous random variable, then $F_Y^{-1}(u) \sim D$ where $u \sim U(0,1)$.
+
+To generate Weibull distributed random variables, we use this method. The Weibull distribution (with $\lambda$ s.t. $\mathbb{E}(X)=1$) has CDF $F(x;k) = 1 - \exp(-\left( x\Gamma(1+1/k) \right)^k)$. This is then inverted to get:
+
+\[
+x = \frac{\log\left(\frac{1}{1-u}\right)^\frac{1}{k}} {\Gamma\left( 1+\frac{1}{k} \right)}
+\]
+
+So generating values of $u \sim U(0,1)$ and plugging them into the above will generate Weibull random variables. The following shows Weibull distributed values with $k = 1$.
+
+```{r, message=F, warning=F, echo=F, fig.height=3}
+library(dplyr)
+library(ggplot2)
+set.seed(38, kind="Mersenne-Twister")
+weibull_gen <- function(k, unif_data) {
+  return(
+    (log(1/(1-unif_data))^(1/k))/gamma(1+1/k)
+  )
+}
+
+weibull_r <- weibull_gen(k=1, runif(1000))
+
+data.frame(weibull_r) %>%
+  ggplot(aes(x=weibull_r)) +
+  geom_histogram(color="black", fill="grey") +
+  scale_x_continuous(limits=c(0,5)) +
+  xlab("Weibull values") +
+  ylab("Frequency") +
+  ggtitle("Weibull distributed values (k=1) ")
+```
+
+# Maximum likelihood estimator
+
+The maximum likelihood estimator is a way of estimating the most optimal value of a parameter
+using the likelihood function.
+
+
+@mle_weibull show that parameter estimation can be accomplished using the technique of maximum likelihood estimation for the Weibull distribution.
+This involves maximizing the likelihood function (often the log-likelihood). The Weibull likelihood and log-likelihood
+function is:
+
+\[
+\begin{aligned}
+L\left( k, \lambda | x_i \right) &= \prod_{i=1}^n \frac{k}{\lambda} \left( \frac{x_i}{\lambda} \right)^k \exp\left( -\left( \frac{x_i}{\lambda} \right)^k \right) \\
+\ell(k, \lambda|x_i) &= -n \log \left( \frac{\lambda^k}{k} \right) + \left( k-1 \right)\left( \sum_{i=1}^n \log x_i \right) - \sum_{i=1}^n \left(\frac{x_i}{\lambda}\right)^k
+\end{aligned}
+\]
+
+In maximizing the log-likelihood, it is found that the maximum likelihood estimate of $\lambda$ and $k$ are:
+
+\[
+\begin{aligned}
+\widehat\lambda &= \left( \frac{1}{n} \sum_{i=1}^n y_i^k \right)^{\frac{1}{k}} \\
+0 &= \frac{n}{k} + \sum_{i=1}^n \log x_i  - \frac{n\sum_{i=1}^n x_i^k \log x_i}{\sum_{i=1}^n x_i^k}
+\end{aligned}
+\]
+
+where $k$ must be solved numerically in the second equation.
+
+# Methodology
+
+Each loop tested parameters $n$ and $k$, where $n$ is a sample of $(10, 100, 500)$ Weibull distributed variables
+and $k \in (0.5, 1, 2, 4)$. $n$ samples were taken for each maximum likelihood estimate of $k$ which was repeated
+$\frac{30,000}{n}$ times so $3000, 300, 60$ repetitions per $n$. These maximum likelihood estimates were compared to
+bootstrap maximum likelihood estimates. These bootstraps were sampled with replacement $100$ times per repetition. 
+
+$k$ cannot be determined analytically so numerical approximation is used. The function \textsf{uniroot} optimizes the objective function, as
+described in the maximum likelihood estimator section, using the bisection method (@bisection). To get the Weibull data for maximum likelihood estimation inverse transform sampling was used with seed=38 using the \textsf{Mersenne-Twister} algorithm.
+
+The bias and mean-squared error are calculated by using the following:
+
+\[
+\begin{aligned}
+\text{Bias}(\widehat\theta(X)) &= \mathbb{E}(\widehat\theta(X)) - \theta\\
+\text{MSE}(\widehat\theta(X)) &= \text{Bias}(\widehat\theta(X))^2 + \text{Var}(\widehat\theta(X))
+\end{aligned}
+\]
+
+# Simulation algorithm
+
+```{eval=FALSE}
+for k in (0.5, 1, 2, 4)
+  for n in (10, 100, 500)
+    for rep in 30000/n
+      Generate X ~ Weibull(k)
+      Generate maximum likelihood of k from MLE
+      Do 100 times:
+        Generate B ~ Weibull(k) with replacement
+        Generate maximum likelihood of k from MLE bootstrap
+      Calculate bootstrap using mean of B (2*k_MLE - mean(B))
+```
+
+```{r, include=FALSE, warning=FALSE, message=FALSE}
+rm(list=ls())
+library(knitrProgressBar)
+library(ggplot2)
+library(reshape2)
+library(dplyr)
+library(moments)
+library(knitr)
+```
+
+```{r, warning=F, message=F, echo=F}
+weibull_gen <- function(k, unif_data) {
+  return(
+    log(1/(1-unif_data))^(1/k)/gamma(1+1/k)
+  )
+}
+
+# Gets the MLE of k (x) given Weibull distributed data
+k_mle <- function(x, x_i=weibull_data) {
+  return(
+    sum(x_i^x*log(x_i))/sum(x_i^x) -
+      1/x -
+      mean(log(x_i))
+  )
+}
+```
+
+```{r, warning=F, message=F, echo=F}
+# 38 default
+set.seed(38, kind="Mersenne-Twister")
+N <- c(10, 100, 500)
+Rf <- 30000
+Output <- NULL
+bias_Output <- NULL
+k_values <- c(0.5, 1, 2, 4)
+n_iter <- length(k_values) + length(N)
+if(n_iter > 1){pb <- progress_estimated(n_iter)}
+
+
+for(k in k_values) {
+  for(n in N){ # Loop for first factor
+    
+    if(n_iter>1) {
+      update_progress(pb)
+    }
+    
+    for(r in 1:round(Rf/n)){ # Replications loop
+      # MLE
+      weibull_data <- weibull_gen(k, runif(n))
+      k_ML <- uniroot(k_mle, interval=c(0.3,10), extendInt="yes")$root
+      
+      # Bootstrap MLE
+      B <- 100
+      v.Bootstrap <- rep(NA, B)
+      input_data <- weibull_data
+      for(b in 1:B) {
+        bx <- sample(input_data, replace = TRUE)
+        weibull_data <- bx
+        v.Bootstrap[b] <- uniroot(k_mle, interval=c(1,10), extendInt="yes")$root
+      }
+      
+      k_bootstrap <- 2*k_ML - mean(v.Bootstrap)
+  
+      Output <- rbind(Output,
+                      c(n,
+                        k,
+                        k_ML,
+                        k_bootstrap
+                      ))
+    }
+  }
+}
+
+Output <- data.frame(Output)
+names(Output) <- c("n", "k","ML", "ML_bootstrap")
+Output$n <- as.factor(Output$n)
+Output.melt <- melt(data=Output,
+                    id.vars=1:2,
+                    measure.vars=3:4,
+                    variable.name="Estimator",
+                    value.name="Estimates")
+
+summarized_data <- Output %>%
+  group_by(n, k) %>%
+  mutate(bias_ML=mean(ML)-k,
+         bias_bootstrap=mean(ML_bootstrap)-k) %>%
+  mutate(MSE_ML=bias_ML^2 + var(ML),
+         MSE_bootstrap=bias_bootstrap^2 + var(ML_bootstrap)) %>%
+  sample_n(1) %>%
+  select(-c(ML_bootstrap, ML))
+
+summarized_data.bias_melt <- melt(data=summarized_data,
+                             id.vars=1:2,
+                             measure.vars=3:4,
+                             variable.name="Estimator",
+                             value.name="Bias")
+
+summarized_data.MSE_melt <- melt(data=summarized_data,
+                             id.vars=1:2,
+                             measure.vars=5:6,
+                             variable.name="Estimator",
+                             value.name="MSE")
+```
+
+# Results
+
+```{r, warning=F, message=F, echo=F, fig.width=10,fig.height=4}
+####
+# k = 0.5
+####
+
+Output.melt %>%
+  filter(k==0.5) %>%
+  ggplot(aes(x=Estimates, col=Estimator)) +
+  geom_vline(xintercept = k, col="gray") +
+  geom_density(linewidth=1.2) +
+  ylab("Empirical densities") +
+  facet_wrap(~n, ncol=1) +
+  ggtitle("k = 0.5") +
+  scale_x_continuous(limits=c(0, 1))
+
+####
+# k = 1
+####
+
+Output.melt %>% 
+  filter(k==1) %>%
+  ggplot(aes(x=Estimates, col=Estimator)) +
+  geom_vline(xintercept = k, col="gray") +
+  geom_density(linewidth=1.2) +
+  ylab("Empirical densities") +
+  facet_wrap(~n, ncol=1) +
+  ggtitle("k = 1") +
+  scale_x_continuous(limits=c(0.5, 1.5))
+
+####
+# k = 2
+####
+
+Output.melt %>% 
+  filter(k==2) %>%
+  ggplot(aes(x=Estimates, col=Estimator)) +
+  geom_vline(xintercept = k, col="gray") +
+  geom_density(linewidth=1.2) +
+  ylab("Empirical densities") +
+  facet_wrap(~n, ncol=1) +
+  ggtitle("k = 2") +
+  scale_x_continuous(limits=c(1.5, 2.5))
+
+####
+# k = 4
+####
+
+Output.melt %>% 
+  filter(k==4) %>%
+  ggplot(aes(x=Estimates, col=Estimator)) +
+  geom_vline(xintercept = k, col="gray") +
+  geom_density(linewidth=1.2) +
+  ylab("Empirical densities") +
+  facet_wrap(~n, ncol=1) +
+  ggtitle("k = 4") +
+  scale_x_continuous(limits=c(3.5, 4.5))
+
+# summarized_data.bias_melt %>%
+#   filter(k==0.5) %>%
+#   ggplot(aes(x=n, y=Bias, colour=Estimator, group=Estimator)) +
+#     geom_line()
+# 
+# summarized_data.MSE_melt %>%
+#   filter(k==0.5) %>%
+#   ggplot(aes(x=n, y=MSE, colour=Estimator, group=Estimator)) +
+#     geom_line()
+```
+
+```{r, warning=F, message=F, echo=F, fig.height=5}
+library(gridExtra)
+
+####
+# Bias
+####
+
+p1 <- summarized_data.bias_melt %>%
+  ggplot(aes(x=n, y=Bias, colour=as.factor(k), 
+             group=interaction(as.factor(Estimator), 
+                               as.factor(k)), 
+             linetype=as.factor(Estimator))) +
+    geom_line(size=1.2) +
+    geom_point() +
+    ggtitle("Bias of k values: ML vs Bootstrap")
+
+####
+# MSE
+####
+
+p2 <- summarized_data.MSE_melt %>%
+  ggplot(aes(x=n, y=MSE, colour=as.factor(k), 
+             group=interaction(as.factor(Estimator), 
+                               as.factor(k)), 
+             linetype=as.factor(Estimator))) +
+    geom_line(size=1.2) +
+    geom_point() +
+    ggtitle("MSE of k values: ML vs Bootstrap")
+
+grid.arrange(p1, p2, nrow = 2, ncol=1)
+```
+
+```{r, warning=F, message=F, echo=F, fig.height=4}
+library(gridExtra)
+
+####
+# Bias
+####
+
+Output.melt %>%
+  filter(k==0.5) %>%
+  ggplot(aes(x=n, y=Estimates, fill=Estimator)) +
+    geom_boxplot() +
+    ggtitle("Distribution of k=0.5 estimates: ML vs Bootstrap")
+
+Output.melt %>%
+  filter(k==1) %>%
+  ggplot(aes(x=n, y=Estimates, fill=Estimator)) +
+    geom_boxplot() +
+    ggtitle("Distribution of k=1 estimates: ML vs Bootstrap")
+
+Output.melt %>%
+  filter(k==2) %>%
+  ggplot(aes(x=n, y=Estimates, fill=Estimator)) +
+    geom_boxplot() +
+    ggtitle("Distribution of k=2 estimates: ML vs Bootstrap")
+
+Output.melt %>%
+  filter(k==4) %>%
+  ggplot(aes(x=n, y=Estimates, fill=Estimator)) +
+    geom_boxplot() +
+    ggtitle("Distribution of k=4 estimates: ML vs Bootstrap")
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+Output.melt %>%
+  group_by(k, Estimator) %>%
+  summarize(Kurtosis=kurtosis(Estimates), Skewness=skewness(Estimates)) %>%
+  kable()
+
+```
+
+# Discussion
+
+The performance of each estimator improves significantly as the sample size increases, but of particular note is the much worsened performance of estimator precision for small samples. These estimates get noticably worsened when $k$ increases. The reasons for this, as described in @3param_weib, are possibly due to the necessity of numerical optimization when determining $k$. They say that the usual Newton-Raphson technique of gradient descent is not a good method as it can get stuck add other optimal points, and that as the sample size increases the more complicated the likelihood function to maximize. Some obvious signs of this are the slight peaks that appear near the true value at $k = 0.5$ and $k = 1$. 
+
+## Bias and variance
+
+The formula for the mean-squared error can be shown to be of the form:
+
+\[
+MSE(X) = \text{Bias}(X)^2 +\text{Var}(X)
+\]
+
+Notice that Bias plays a far larger weight than variance meaning that, if the bootstrap 
+estimator is far less biased, it must have a large variance if it has a higher MSE than 
+the ML estimator. Both estimators reduce bias and MSE as the number of samples increase: showing signs of optimization.
+
+### Estimator distributions
+
+The kurtosis and skewness between the two estimators vary significantly for all values of $k$.
+The bootstrap maximum likelihood estimate has far larger tails and is much less like a peak.
+These values give significant evidence of large variation between values for not only the bootstrap but
+the maximum likelihood too. The maximum likelihood is a much more consistent estimator but also far less biased.
+
+### Conclusion
+
+Neither estimator is a very good one. Multiple papers (@3param_weib, @2param_weib) agree that simulating two-parameter
+Weibull distributions using regular bias reduction techniques is not enough for parameter
+estimation. 
+
+# Computer hardware and software
+
++ \textbf{GPU:} \textsf{NVIDIA GeForce RTX 3060}
++ \textbf{Processor:} \textsf{AMD Ryzen 5 5600G with Radeon Graphics}
++ \textbf{OS:} \textsf{Windows 11 22H2}
++ \textbf{Simulation time:} \textsf{15m 19s}
++ \textbf{Software:} \textsf{R}, \textsf{ggplot2}, \textsf{runif}
++ \textbf{Seed:} \textsf{Mersenne-Twister; 38}
+
+
+# References
+
+
+
+
+
+
+
+
+
+
